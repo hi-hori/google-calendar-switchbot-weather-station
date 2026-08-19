@@ -2,6 +2,10 @@
 
 Google スプレッドシートに紐づく Apps Script で、Google カレンダーの当日予定を SwitchBot Weather Station のカスタムページへ送ります。
 
+## 開発について
+
+このリポジトリのコードは OpenAI Codex を用いて生成されました。
+
 ## セットアップ
 
 1. 対象の Google スプレッドシートで **拡張機能 → Apps Script** を開き、`Code.gs` の内容を貼り付けて保存します。
