@@ -1,0 +1,13 @@
+# Apps Script / clasp のローカル設定には認証情報が含まれ得るため追跡しない
+.clasp.json
+
+# ローカルの認証情報・環境設定
+.env
+.env.*
+*.key
+*.pem
+
+# OS / エディタ
+.DS_Store
+Thumbs.db
+.vscode/
