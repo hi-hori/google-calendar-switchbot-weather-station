@@ -2,8 +2,7 @@
  * Google Calendar の「今日」の予定を SwitchBot Weather Station の
  * カスタムページへ送る Google Apps Script です。
  *
- * 初回のみ setSecrets() の値を自分のものに書き換えて実行してください。
- * 値は Script Properties に保存され、以降はソースコードに残りません。
+ * 認証情報は Apps Script の Script Properties に保存します。
  */
 
 const SWITCHBOT_API_BASE = 'https://api.switch-bot.com/v1.1';
@@ -12,17 +11,8 @@ const TRIGGER_HANDLER = 'sendTodaysCalendarToSwitchBot';
 const CALENDAR_UPDATE_TRIGGER_HANDLER = 'handleCalendarUpdate';
 const LOG_CALENDAR_TEXT = true;
 const FUTURE_LOOKAHEAD_DAYS = 30; // 明日から何日先まで「次の予定」を探すか
-const MAX_UPCOMING_EVENTS_TO_SHOW = 2;
-
-/**
- * 初回設定用。値を書き換えて一度だけ実行します。
- * 実行後は、この関数内の値を消しておくことを推奨します。
- */
-function setSecrets() {
-  throw new Error(
-    '認証情報はコードに書かず、Apps Script の「プロジェクトの設定 → スクリプト プロパティ」で設定してください。'
-  );
-}
+const MAX_UPCOMING_EVENTS_TO_SHOW = 3;
+const MAX_UPCOMING_DAYS_TO_SHOW = 2;
 
 /** 今日の予定を取得、整形して SwitchBot へ送信します。 */
 function sendTodaysCalendarToSwitchBot() {
@@ -170,17 +160,13 @@ function deleteCalendarUpdateTriggers() {
 
 function formatSchedule_(calendar, startDate, timezone) {
   const todaysEvents = getEventsForDay_(calendar, startDate);
-  const lines = [formatDaySchedule_(todaysEvents, startDate, timezone, '本日の予定', todaysEvents.length)];
-  const nextScheduledDay = findNextScheduledDay_(calendar, startDate);
+  const lines = todaysEvents.length > 0
+    ? [formatDaySchedule_(todaysEvents, startDate, timezone, '本日の予定', todaysEvents.length)]
+    : [];
+  const upcomingEvents = getUpcomingEvents_(calendar, startDate);
 
-  if (nextScheduledDay) {
-    lines.push(formatDaySchedule_(
-      nextScheduledDay.events,
-      nextScheduledDay.date,
-      timezone,
-      nextScheduledDay.daysAfterToday === 1 ? '明日の予定' : '次の予定',
-      MAX_UPCOMING_EVENTS_TO_SHOW
-    ));
+  if (upcomingEvents.length > 0) {
+    lines.push(formatUpcomingSchedule_(upcomingEvents, timezone));
   } else {
     lines.push('翌日以降の予定はありません');
   }
@@ -190,8 +176,7 @@ function formatSchedule_(calendar, startDate, timezone) {
 function formatDaySchedule_(events, date, timezone, heading, maxEventsToShow) {
   const japaneseWeekdays = ['日', '月', '火', '水', '木', '金', '土'];
   const dateLabel = Utilities.formatDate(date, timezone, 'M/d') + ' (' + japaneseWeekdays[date.getDay()] + ')';
-  const countLabel = heading !== '本日の予定' && events.length > 1 ? '（' + events.length + '件）' : '';
-  const lines = [heading + ' ' + dateLabel + countLabel];
+  const lines = [heading + ' ' + dateLabel];
   if (events.length === 0) {
     lines.push('予定はありません');
     return lines.join('\n');
@@ -210,23 +195,51 @@ function formatDaySchedule_(events, date, timezone, heading, maxEventsToShow) {
   return lines.join('\n');
 }
 
+function formatUpcomingSchedule_(upcomingEvents, timezone) {
+  const japaneseWeekdays = ['日', '月', '火', '水', '木', '金', '土'];
+  const lines = ['翌日以降の予定'];
+
+  upcomingEvents.forEach(({event, date}) => {
+    const dateLabel = Utilities.formatDate(date, timezone, 'M/d') + ' (' + japaneseWeekdays[date.getDay()] + ')';
+    const time = event.isAllDayEvent()
+      ? ''
+      : Utilities.formatDate(event.getStartTime(), timezone, 'HH:mm') + ' ';
+    lines.push('・' + dateLabel + ' ' + time + event.getTitle());
+  });
+  return lines.join('\n');
+}
+
 function getEventsForDay_(calendar, date) {
   return calendar.getEventsForDay(date)
     .sort((a, b) => a.getStartTime().getTime() - b.getStartTime().getTime());
 }
 
-function findNextScheduledDay_(calendar, startDate) {
+function getUpcomingEvents_(calendar, startDate) {
+  const upcomingEvents = [];
+  let scheduledDayCount = 0;
   for (let daysAfterToday = 1; daysAfterToday <= FUTURE_LOOKAHEAD_DAYS; daysAfterToday += 1) {
     const date = new Date(startDate.getTime());
     date.setDate(date.getDate() + daysAfterToday);
     const events = getEventsForDay_(calendar, date);
-    if (events.length > 0) {
-      log_('直近の将来予定: ' + Utilities.formatDate(date, Session.getScriptTimeZone(), 'yyyy-MM-dd') + ' / ' + events.length + '件');
-      return {date: date, events: events, daysAfterToday: daysAfterToday};
+    if (events.length === 0) continue;
+
+    scheduledDayCount += 1;
+    for (const event of events) {
+      upcomingEvents.push({event: event, date: date});
+      if (upcomingEvents.length === MAX_UPCOMING_EVENTS_TO_SHOW) {
+        log_('翌日以降の予定を ' + upcomingEvents.length + ' 件、' + scheduledDayCount + ' 日分取得しました。');
+        return upcomingEvents;
+      }
+    }
+    if (scheduledDayCount === MAX_UPCOMING_DAYS_TO_SHOW) {
+      log_('翌日以降の予定を ' + upcomingEvents.length + ' 件、' + scheduledDayCount + ' 日分取得しました。');
+      return upcomingEvents;
     }
   }
-  log_('直近 ' + FUTURE_LOOKAHEAD_DAYS + ' 日以内に翌日以降の予定はありません。');
-  return null;
+  log_(upcomingEvents.length
+    ? '翌日以降の予定を ' + upcomingEvents.length + ' 件、' + scheduledDayCount + ' 日分取得しました。'
+    : '直近 ' + FUTURE_LOOKAHEAD_DAYS + ' 日以内に翌日以降の予定はありません。');
+  return upcomingEvents;
 }
 
 function sendCustomPage_(calendarText, properties) {
